@@ -43,7 +43,6 @@ content='''<?xml version="1.0" encoding="utf-8"?>
 </Types>'''
 files=[
     *(root / name for name in ('package.json', 'extension.js', 'README.md', 'DEVELOPMENT.md', 'CHANGELOG.md', 'LICENSE')),
-    *sorted((root / 'docs' / 'screenshots').glob('*.png')),
     *sorted(f for f in (root / 'media').rglob('*') if f.is_file()),
     *sorted(f for f in (root / 'lib').iterdir() if f.suffix in ('.js', '.json', '.java')),
 ]

@@ -4,7 +4,7 @@
 
 [下载 VSIX](https://github.com/KiralasuKi/voxel-nbt-studio/releases/latest)
 
-![Voxel NBT Studio 编辑界面](docs/screenshots/overview.png)
+![Voxel NBT Studio 编辑界面](https://raw.githubusercontent.com/KiralasuKi/voxel-nbt-studio/main/docs/screenshots/overview.png)
 
 此插件是基于游戏版本26.3进行开发，不同版本可能会导致部分功能无法正常使用，需要后续适配
 
@@ -28,7 +28,7 @@
 2. 点 **填充选区** 换方块，拖箭头移动、拖圆环旋转。要沿一个方向复制延伸，改用 `S` **挤出**。只想替换某些方块，就在 **编辑谓词…** 中设置掩码（需要 JAR）。
 3. 按 `Ctrl+C` 复制选区，`Ctrl+V` 后点击落点。可移动或旋转半透明蓝图，再按 `Enter` 放置；模板列表也可将副本另存为 `.nbt`。覆盖和白名单在 **工具 → 移动与覆盖** 设置。
 
-![框选及移动、旋转手柄](docs/screenshots/box-tools.png)
+![框选及移动、旋转手柄](https://raw.githubusercontent.com/KiralasuKi/voxel-nbt-studio/main/docs/screenshots/box-tools.png)
 
 ## 编辑 NBT 和实体
 
@@ -36,15 +36,15 @@
 - **普通实体：** 在 **实体** 页选中或新增实体，可编辑 NBT、拖动平移、水平旋转、复制或删除。导入 JAR 后可预览支持的模型，包括玩家模型、画和展示框。批量复制时，可在框选里勾选 **包含实体**。
 - **全文 SNBT：** 点击右上角 **SNBT** 编辑整个结构。字段控件和 SNBT 支持补全；应用后仍需保存。
 
-![取样箱子并编辑字段](docs/screenshots/block-nbt.png)
+![取样箱子并编辑字段](https://raw.githubusercontent.com/KiralasuKi/voxel-nbt-studio/main/docs/screenshots/block-nbt.png)
 
-![实体预览与编辑](docs/screenshots/entities.png)
+![实体预览与编辑](https://raw.githubusercontent.com/KiralasuKi/voxel-nbt-studio/main/docs/screenshots/entities.png)
 
 ## 用指令编辑
 
 按 `/` 打开命令栏，支持 `/setblock` 放置、`/fill` 区域填充和 `/summon` 新增实体（需要 JAR）。`Tab` 补全，`Enter` 执行。可以直接输入坐标，也可以点 **取坐标** 后点画布；绿色边框显示目标格，按住 `Alt` 取命中面外侧一格。`/fill` 可连续点两个角。
 
-![命令取坐标预览](docs/screenshots/commands.png)
+![命令取坐标预览](https://raw.githubusercontent.com/KiralasuKi/voxel-nbt-studio/main/docs/screenshots/commands.png)
 
 ---
 

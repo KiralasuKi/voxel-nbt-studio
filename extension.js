@@ -10,6 +10,7 @@ const {create,validateState,clipThumb,clipBytes,clipEntityPreview,clipHeadProfil
 const {jarFolder,jarMaskData}=require('./lib/assets');
 const {collisionShapes,prepareSummon,stopSummon,summonEntity}=require('./lib/native-summon');
 const {entityModels}=require('./lib/mask-java');
+const {addHint}=require('./lib/paths');
 const {playerSkin}=require('./lib/player-skins');
 const manifest=require('./package.json');
 const VIEW='voxelNbt.structure';
@@ -286,6 +287,9 @@ class Provider{
   backupCustomDocument(doc,context,token){return doc.run(async()=>{await doc.ready;cancel(token);const file=uriCheck(context.destination);await fs.mkdir(path.dirname(file),{recursive:true});const {data}=await doc.call('save');cancel(token);await atomicFile(file,data);return {id:context.destination.toString(),delete:()=>fs.unlink(file).catch(()=>{})};});}
 }
 function activate(context){
+  const hint=()=>addHint((vscode.workspace.workspaceFolders??[]).map(f=>f.uri.fsPath));
+  hint();
+  context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(hint));
   const provider=new Provider(context);
   for(const action of ['view','place','paint','erase','pick','extrude','box','clearSelection','resize','paletteAdd','paletteDelete','axisXMinus','axisXPlus','axisYMinus','axisYPlus','axisZMinus','axisZPlus','topView','reset','flyView','material','invisibleBlocks','paletteState','tileSave','tileDelete','toggleMoveTile','settings'])context.subscriptions.push(vscode.commands.registerCommand('voxelNbt.'+action,()=>provider.command(action)));
   const open=async uri=>{if(!uri){const chosen=await vscode.window.showOpenDialog({canSelectMany:false,filters:{'Java 结构 NBT':['nbt']}});uri=chosen?.[0];}if(uri)await vscode.commands.executeCommand('vscode.openWith',uri,VIEW);};
