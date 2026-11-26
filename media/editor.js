@@ -823,7 +823,7 @@ function boxHint(){
  $('confirmBox').disabled=takingCoordinates||!a||!b||!draft||pending;
  $('apply').disabled=takingCoordinates||Boolean(blueprint||pending||!(draft?a&&b:selectionRegion));
 }
-function updateDraft(){commandBar.update(!model||pending||fatal||Boolean(brush)||Boolean(blueprint),Boolean(flight));for(const id of ['save','snbtMode','resize','paletteAdd','paletteDelete','paletteClean','paletteState','tileSave','tileDelete','initTile'])$(id).disabled=fatal||!model||pending||Boolean(brush)||Boolean(flight);
+function updateDraft(){commandBar.update(!model||pending||fatal||Boolean(brush)||Boolean(blueprint),Boolean(flight));for(const id of ['save','upgradeStructure','snbtMode','resize','paletteAdd','paletteDelete','paletteClean','paletteState','tileSave','tileDelete','initTile'])$(id).disabled=fatal||!model||pending||Boolean(brush)||Boolean(flight);
  if(model){$('paletteDelete').disabled||=model.count<=1;$('paletteState').disabled||=active<0;}
  boxHint();selectionUI();inspector.buttons();tileTree.buttons();entities.buttons();updateSnbt();}
 const commandBar=createStructureCommands({context:()=>{
@@ -863,6 +863,10 @@ function updateSnbt(){
 }
 function snbtStatus(message,error=false){const status=$('snbtStatus');status.textContent=message;status.classList.toggle('error',error);}
 function readSnbt(){if(snbtReading||pending)return;snbtReading=true;snbtStatus('正在读取结构 SNBT…');updateSnbt();vscode.postMessage({type:'snbt'});}
+$('upgradeStructure').onclick=()=>{
+ if(!model||pending||fatal||flight||brush||blueprint||drag)return;
+ pending=true;updateDraft();vscode.postMessage({type:'upgradeStructure'});
+};
 $('snbtMode').onclick=()=>{
  if(!model||pending||fatal||flight)return;
  $('snbtDialog').showModal();if(snbtRevision&&$('snbtText').value!==snbtBase){snbtStatus('草稿未应用。应用后还需保存 NBT 文件。');updateSnbt();return;}

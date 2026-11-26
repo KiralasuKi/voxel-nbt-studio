@@ -22,7 +22,7 @@
 
 ## 两条数据流
 
-1. **编辑与保存：** Webview 发送 `edit`（局部改动）或 `layout`（结构级改动）→ `Document.run()` 串行提交给 Node 工作线程 → `Provider` 广播 `patch`、`model` 或 `entityRows`，并为 VS Code 注册撤销/重做 → 向提交者返回 `ack` 或 `error`。预览和成功响应不等于已经写入磁盘；只有保存命令写文件。保存使用同目录临时文件并检查原文件的哈希，避免覆盖外部改动。
+1. **编辑与保存：** Webview 发送 `edit`（局部改动）或 `layout`（结构级改动）→ `Document.run()` 串行提交给 Node 工作线程 → `Provider` 广播 `patch`、`model` 或 `entityRows`，并为 VS Code 注册撤销/重做 → 向提交者返回 `ack` 或 `error`。预览和成功响应不等于已经写入磁盘；只有保存命令写文件。保存使用同目录临时文件并检查原文件的哈希，避免覆盖外部改动。结构版本升级是独立入口：`checkUpgrade()` 在预览前询问，工作线程调用目标 JAR 的结构 DataFixer，并验证结果后才写入磁盘。
 2. **渲染：** Webview 应用数据后，将网格所需的数据交给浏览器的网格 Worker。Worker 返回顶点，主线程负责 GPU 上传和绘制。`modelId` 区分文件快照，`epoch` 区分同一快照中的切层和材质重建；旧结果不能覆盖新视图。
 
 几个容易改错的约定：
@@ -50,6 +50,8 @@ node --test test/*.test.js
 node test/webview-smoke.cjs
 python -X utf8 package.py
 ```
+
+设置 `VOXEL_RELEASE_JARS` 为包含 `1.21.jar`、`1.21.5.jar`、`26.3.jar` 的目录，可运行 `node --test test/upgrade-native.test.js` 验证实际迁移。
 
 `test/webview-harness.cjs` 提供共用的本机测试服务器和浏览器启动配置。掩码的 Java 对照测试另外读取 `VOXEL_MASK_LIBS`：使用系统类路径分隔符（Windows 为 `;`）拼接 `lib/mask-java.json` 中 `libraries` 对应的本地 JAR 路径。单独运行界面测试可避免与其它 Java 测试抢启动资源。VSIX 输出到 `dist/`。测试使用临时结构，不需要启动游戏或写入现有存档。
 

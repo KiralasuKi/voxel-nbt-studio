@@ -30,6 +30,7 @@ class SummonEntity {
    call("SharedConstants",null,"tryDetectVersion");call("server.Bootstrap",null,"bootStrap");
    if(args[1].equals("--summon"))serve(protocol);
    else if(args[1].equals("--palette"))upgradePalette(Path.of(args[2]),Path.of(args[3]));
+   else if(args[1].equals("--structure"))upgradeStructure(Path.of(args[2]),Path.of(args[3]),Integer.parseInt(args[4]),Integer.parseInt(args[5]));
    else if(args[1].equals("--models"))Files.writeString(Path.of(args[2]),new Gson().toJson(bakedEntities(Path.of(args[3]))));
    else writePickShapes(Path.of(args[1]));
    System.exit(0);
@@ -96,6 +97,20 @@ class SummonEntity {
   if(bytes.size()>256*1024)throw new IllegalArgumentException("Entity NBT exceeds 256 KiB");
   return bytes.toByteArray();
  }
+ private static Object fixStructure(Object root,int from)throws ReflectiveOperationException {
+  var fixer=call("util.datafix.DataFixers",null,"getDataFixer");
+  var kind=field("util.datafix.DataFixTypes",null,"STRUCTURE");
+  return call("util.datafix.DataFixTypes",kind,"updateToCurrentVersion",fixer,root,from);
+ }
+ private static void upgradeStructure(Path input,Path output,int from,int to)throws Exception {
+  Object root;
+  try(var stream=new java.io.DataInputStream(Files.newInputStream(input))){
+   root=call("nbt.NbtIo",null,"read",stream,call("nbt.NbtAccounter",null,"create",384L*1024*1024));
+  }
+  var fixed=fixStructure(root,from);
+  call(TAG,fixed,"putInt","DataVersion",to);
+  call("nbt.NbtIo",null,"write",fixed,output);
+ }
  // Upgrade only a temporary palette for matching against the selected JAR, never the structure file.
  private static void upgradePalette(Path input,Path output)throws Exception {
   var json=JsonParser.parseString(Files.readString(input)).getAsJsonObject();
@@ -108,9 +123,7 @@ class SummonEntity {
    ((List<Object>)list).add(tag);
   }
   call(TAG,root,"put","palette",list);
-  var fixer=call("util.datafix.DataFixers",null,"getDataFixer");
-  var kind=field("util.datafix.DataFixTypes",null,"STRUCTURE");
-  var fixed=call("util.datafix.DataFixTypes",kind,"updateToCurrentVersion",fixer,root,json.get("version").getAsInt());
+  var fixed=fixStructure(root,json.get("version").getAsInt());
   var palette=(List<?>)call(TAG,fixed,"get","palette");
   if(palette.size()!=((List<?>)list).size())throw new IllegalStateException("Palette size changed during upgrade");
   var registry=field("core.registries.BuiltInRegistries",null,"BLOCK");
@@ -351,7 +364,7 @@ class SummonEntity {
    if(signatures==null?!name.equals(m.getName()):signatures.stream().noneMatch(s->s.matches(m)))continue;
    var types=m.getParameterTypes();boolean matches=true;
    for(int i=0;i<args.length;i++){
-    var t=types[i];if(t==boolean.class)t=Boolean.class;if(t==int.class)t=Integer.class;if(t==float.class)t=Float.class;if(t==double.class)t=Double.class;
+    var t=types[i];if(t==boolean.class)t=Boolean.class;if(t==int.class)t=Integer.class;if(t==long.class)t=Long.class;if(t==float.class)t=Float.class;if(t==double.class)t=Double.class;
     if(!t.isInstance(args[i])){matches=false;break;}
    }
    if(matches){m.setAccessible(true);return m;}

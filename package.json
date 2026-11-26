@@ -3,7 +3,7 @@
   "displayName": "Voxel NBT Studio",
   "description": "Fast offline 3D viewer and voxel editor for Minecraft Java structure NBT.",
   "publisher": "local-datapack-tools",
-  "version": "1.1.0",
+  "version": "1.1.7",
   "license": "MIT",
   "homepage": "https://github.com/KiralasuKi/voxel-nbt-studio#readme",
   "repository": {
