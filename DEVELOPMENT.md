@@ -5,7 +5,7 @@
 - VS Code 桌面版、Node.js（建议使用项目测试过的 24）和 Python 3。
 - 安装依赖：运行时不需要 npm 依赖；浏览器测试与截图另外需要 Playwright 和 Chrome/Chromium。
 - 从仓库根目录执行 `code --extensionDevelopmentPath="$PWD"`，在扩展开发主机里右键一个**测试用**结构 NBT，用 Voxel NBT Studio 打开。前端报错可用 VS Code 的 **Developer: Open Webview Developer Tools** 检查；文件保存、JAR 和工作线程问题优先看扩展主机日志。
-- 原版模型、碰撞箱和实体初始化需要本地客户端 JAR；对照测试使用完整的 26.3 安装和 Java 25，不提交 JAR 或解包资源。
+- 原版模型、碰撞箱和实体初始化需要本地客户端 JAR 与完整依赖。测试环境可通过 `VOXEL_LIBRARIES` 提供依赖目录（多个目录用系统路径分隔符）。JDK 从 `VOXEL_JAVA`、`JAVA_HOME` 或 `PATH` 选择，1.21 系列需 21+，26.x 需 25+。
 
 ## 修改从哪里开始
 
@@ -22,7 +22,7 @@
 
 ## 两条数据流
 
-1. **编辑与保存：** Webview 发送 `edit`（局部改动）或 `layout`（结构级改动）→ `Document.run()` 串行提交给 Node 工作线程 → `Provider` 广播 `patch`、`model` 或 `entityRows`，并为 VS Code 注册撤销/重做 → 向提交者返回 `ack` 或 `error`。预览和成功响应不等于已经写入磁盘；只有保存命令写文件。保存使用同目录临时文件并检查原文件的哈希，避免覆盖外部改动。
+1. **编辑与保存：** Webview 发送 `edit`（局部改动）或 `layout`（结构级改动）→ `Document.run()` 串行提交给 Node 工作线程 → `Provider` 广播 `patch`、`model` 或 `entityRows`，并为 VS Code 注册撤销/重做 → 向提交者返回 `ack` 或 `error`。预览和成功响应不等于已经写入磁盘；只有保存命令写文件。保存使用同目录临时文件并检查原文件的哈希，避免覆盖外部改动。结构版本升级是独立入口：`checkUpgrade()` 在预览前询问，工作线程调用目标 JAR 的结构 DataFixer，并验证结果后才写入磁盘。
 2. **渲染：** Webview 应用数据后，将网格所需的数据交给浏览器的网格 Worker。Worker 返回顶点，主线程负责 GPU 上传和绘制。`modelId` 区分文件快照，`epoch` 区分同一快照中的切层和材质重建；旧结果不能覆盖新视图。
 
 几个容易改错的约定：
@@ -40,7 +40,7 @@
 node --test test/*.test.js
 ```
 
-需要核对原版模型、贴图和命令交互时，提供本机实际路径（原版 26.3 客户端 JAR 须从完整安装目录选取，且 Java 25 可从 PATH 运行）：
+运行核心回归测试时，用完整的 26.3 客户端 JAR 和 Java 25；不提交 JAR 或解包资源：
 
 ```powershell
 $env:VOXEL_MASK_JAR = '<原版客户端 JAR 路径>'
@@ -51,7 +51,15 @@ node test/webview-smoke.cjs
 python -X utf8 package.py
 ```
 
+设置 `VOXEL_RELEASE_JARS` 为包含 `1.21.jar`、`1.21.5.jar`、`26.3.jar` 的目录，可运行 `node --test test/upgrade-native.test.js` 验证实际迁移。
+
 `test/webview-harness.cjs` 提供共用的本机测试服务器和浏览器启动配置。掩码的 Java 对照测试另外读取 `VOXEL_MASK_LIBS`：使用系统类路径分隔符（Windows 为 `;`）拼接 `lib/mask-java.json` 中 `libraries` 对应的本地 JAR 路径。单独运行界面测试可避免与其它 Java 测试抢启动资源。VSIX 输出到 `dist/`。测试使用临时结构，不需要启动游戏或写入现有存档。
+
+## 多版本验证
+
+`node scripts/test-java-releases.cjs <正式版客户端 JAR 目录>` 逐个检查该目录的 JAR。每个版本验证原版方块注册表、碰撞箱、掩码、旋转、实体模型、原版召唤以及 NBT 读写；未找到 JAR 或验证失败时退出非零。脚本不启动游戏、不引用用户存档。
+
+26.3 使用完整的静态模型提交提取器；其他版本使用所选 JAR 烘焙的基础模型与贴图，不承诺完整覆盖变种、装备、动态部件或玩家头颅皮肤。未能加载原版碰撞数据时，界面提示并退回整格选取。
 
 ## 截图和发布
 

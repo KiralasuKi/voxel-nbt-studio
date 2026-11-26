@@ -20,6 +20,7 @@ const assets=process.env.VOXEL_ASSETS;let pngs=0;const texturePaths=new Set();
   await page.exposeFunction('bridge',async m=>{
    traces.push(m);
    if(m.type==='ready')await load();
+   if(m.type==='upgradeStructure')await page.evaluate(()=>window.postMessage({type:'ack'},'*'));
    if(m.type==='copyTemplate'){
     const clip=doc.copySelection(m.selection,0,m.includeInvisible,m.region,m.entitySelection??[]);clips.set(clips.size+1,clip);const items=[...clips].reverse().map(([id,c])=>({id,name:'模板 '+id,entityCount:c.entities.length,...clipThumb(c)}));
     await page.evaluate(items=>{window.postMessage({type:'templates',items},'*');window.postMessage({type:'copied'},'*');},items);
@@ -117,8 +118,11 @@ const assets=process.env.VOXEL_ASSETS;let pngs=0;const texturePaths=new Set();
   await page.goto('http://127.0.0.1:'+server.address().port);
   const rendered=async()=>page.waitForFunction(()=>!!document.getElementById('stats').textContent&&!document.getElementById('message').textContent&&!document.getElementById('stats').textContent.includes('构建'));
   await rendered();
+  await page.locator('#upgradeStructure').click();
+  assert.equal(traces.filter(m=>m.type==='upgradeStructure').length,1);
+  await page.waitForFunction(()=>!document.getElementById('upgradeStructure').disabled);
   await page.locator('#keyboard').click();
-  assert.deepEqual(await page.locator('[data-resource]').evaluateAll(buttons=>buttons.map(b=>b.dataset.resource)),['jar','none']);
+  assert.deepEqual(await page.locator('[data-resource]').evaluateAll(buttons=>buttons.map(b=>b.dataset.resource)),['jar','download','none']);
   assert.match(await page.locator('#resourcePath').textContent(),/色块模式/);
   assert.equal(await page.locator('#renderMode option[value=game]').isDisabled(),true);assert.equal(await page.locator('#gameGamma').isDisabled(),true);
   await page.locator('#settingsClose').click();

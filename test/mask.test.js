@@ -18,7 +18,7 @@ test('compile masks: selected JAR tag recursion, predicates, local height and na
  const height=compileMask(pred('height_range',{min_inclusive:{absolute:1},max_inclusive:{below_top:0}}),catalog);
  assert.equal(height.test(get,3,0,0,0),false);assert.equal(height.test(get,3,0,1,0),true);assert.equal(height.test(get,3,0,2,0),true);assert.equal(height.test(get,3,0,3,0),false);
 
- assert.throws(()=>compileMask(pred('solid'),{tags:catalog.tags}),/26\.3/);
+ assert.throws(()=>compileMask(pred('solid'),{tags:catalog.tags}),/原版方块状态数据/);
  assert.throws(()=>compileMask(pred('true'),null),/JAR/);
  assert.throws(()=>compileMask(pred('matching_block_tag',{tag:'#minecraft:logs'}),catalog),/不带 #/);
  assert.equal(compileMask(pred('matching_block_tag',{tag:'minecraft:missing'}),catalog).test(get,3,0,0,0),false);

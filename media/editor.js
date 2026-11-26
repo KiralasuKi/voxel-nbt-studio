@@ -601,7 +601,7 @@ const fullHitBox=[0,0,0,1,1,1],gridHitIndex=collisionIndex({blocks:{},shapes:[fu
 const markerBox=r=>[.5-r,.5-r,.5-r,.5+r,.5+r,.5+r];
 const airHitBox=markerBox(.125),voidHitBox=markerBox(.0625);
 function trace(ev,skipFluids=false,markers=null){
- const r=ray(ev),native=prefs.resource?.kind==='jar',index=native?collisions:gridHitIndex;
+ const r=ray(ev),native=prefs.resource?.kind==='jar'&&!collisionError,index=native?collisions:gridHitIndex;
  if(!r||!index)return null;
  const fluids=!skipFluids&&$('selectFluid').checked;
  const hit=traceCollision(r,model.size,index,p=>{
@@ -632,7 +632,7 @@ function commandPointAt(e){
 }
 function entityPositionAt(e){const t=trace(e),p=t?.p?plus(t.p,t.n):workplane(t);return bounds(p)?p:null;}
 function pickHint(){
- $('startPick').title=prefs.resource?.kind!=='jar'?'取样（未选择 JAR，按整格取样）':collisionError??(collisions?'按原版碰撞箱或方块轮廓取样':'正在读取原版方块形状…');
+ $('startPick').title=prefs.resource?.kind!=='jar'?'取样（未选择 JAR，按整格取样）':(collisionError?collisionError+'；目前按整格取样':null)??(collisions?'按原版碰撞箱或方块轮廓取样':'正在读取原版方块形状…');
  document.querySelector('[data-tool=pick]').title=$('startPick').title;
 }
 function target(ev){const t=trace(ev,false,!showInvisible?null:mode==='box'?'all':mode==='erase'?'air':null);if(!t)return null;let p;
@@ -823,7 +823,7 @@ function boxHint(){
  $('confirmBox').disabled=takingCoordinates||!a||!b||!draft||pending;
  $('apply').disabled=takingCoordinates||Boolean(blueprint||pending||!(draft?a&&b:selectionRegion));
 }
-function updateDraft(){commandBar.update(!model||pending||fatal||Boolean(brush)||Boolean(blueprint),Boolean(flight));for(const id of ['save','snbtMode','resize','paletteAdd','paletteDelete','paletteClean','paletteState','tileSave','tileDelete','initTile'])$(id).disabled=fatal||!model||pending||Boolean(brush)||Boolean(flight);
+function updateDraft(){commandBar.update(!model||pending||fatal||Boolean(brush)||Boolean(blueprint),Boolean(flight));for(const id of ['save','upgradeStructure','snbtMode','resize','paletteAdd','paletteDelete','paletteClean','paletteState','tileSave','tileDelete','initTile'])$(id).disabled=fatal||!model||pending||Boolean(brush)||Boolean(flight);
  if(model){$('paletteDelete').disabled||=model.count<=1;$('paletteState').disabled||=active<0;}
  boxHint();selectionUI();inspector.buttons();tileTree.buttons();entities.buttons();updateSnbt();}
 const commandBar=createStructureCommands({context:()=>{
@@ -863,6 +863,10 @@ function updateSnbt(){
 }
 function snbtStatus(message,error=false){const status=$('snbtStatus');status.textContent=message;status.classList.toggle('error',error);}
 function readSnbt(){if(snbtReading||pending)return;snbtReading=true;snbtStatus('正在读取结构 SNBT…');updateSnbt();vscode.postMessage({type:'snbt'});}
+$('upgradeStructure').onclick=()=>{
+ if(!model||pending||fatal||flight||brush||blueprint||drag)return;
+ pending=true;updateDraft();vscode.postMessage({type:'upgradeStructure'});
+};
 $('snbtMode').onclick=()=>{
  if(!model||pending||fatal||flight)return;
  $('snbtDialog').showModal();if(snbtRevision&&$('snbtText').value!==snbtBase){snbtStatus('草稿未应用。应用后还需保存 NBT 文件。');updateSnbt();return;}
@@ -1084,7 +1088,12 @@ window.addEventListener('message',({data:m})=>{
   if(materials&&m.data?.heads){materials.setHeads(m.data.heads);void applyMaterials();if(blueprint?.blocks)void meshBlueprint(true);}
  }
  if(m.type==='playerSkin')skins.receive(m.request,m.skin);
- if(m.type==='collisionShapes'){collisions=m.catalog?collisionIndex(m.catalog):null;collisionError=m.error??null;hover=null;pickHint();dirty();}
+ if(m.type==='collisionShapes'){
+  collisions=m.catalog?collisionIndex(m.catalog):null;collisionError=m.error??null;
+  if(m.catalog?.schema){blockSchema=m.catalog.schema;registryBlocks=Object.keys(blockSchema);if(m.catalog.tiles)tileTypes=m.catalog.tiles;refreshBrush();refreshBlockState();}
+  if(collisionError)note('原版形状不可用，暂用整格选取。'+collisionError,true);
+  hover=null;pickHint();dirty();
+ }
  if(m.type==='copied'){copyingTemplate=false;showSidebar('templates');templateButtons();note('已复制选区到临时模板。');}
  if(m.type==='previewTemplate'&&blueprint?.item.id===m.id&&blueprint.origin&&!blueprint.blocks){Object.assign(blueprint,{states:m.states,blocks:m.blocks,entities:m.entities??[],headProfiles:m.headProfiles,colors:m.states.map(color)});void meshBlueprint();}
  if(m.type==='model'&&!fatal){try{loadModel(m.data,m.growth);entities.setRows(m.data.entityList);selectionUI();}catch(e){fatal=true;note(e.message,true);updateDraft();}}
@@ -1143,7 +1152,7 @@ canvas.addEventListener('pointerdown',e=>{
  if(commandBar.picking()){
   if(e.button===0&&!e.shiftKey){
    lastClickPickedCoordinate=true;
-   if(prefs.resource?.kind==='jar'&&!collisions){note(collisionError??'正在读取原版方块形状，请稍候。',Boolean(collisionError));return;}
+   if(prefs.resource?.kind==='jar'&&!collisions&&!collisionError){note(collisionError??'正在读取原版方块形状，请稍候。',Boolean(collisionError));return;}
    drag={id:e.pointerId,commandPoint:true};return;
   }
   const nav=navigation(e);
@@ -1156,7 +1165,7 @@ canvas.addEventListener('pointerdown',e=>{
    drag={...handle,id:e.pointerId,nav:handle.tangent?'entityRotate':'entityMove',x:e.clientX,y:e.clientY,ox:e.clientX,oy:e.clientY,last:handle.tangent?ringAngle(e,handle):null,total:0,steps:0};
    canvas.classList.add('drag');dirty();return;
   }
-  if(mode!=='view'&&prefs.resource?.kind==='jar'&&!collisions){note(collisionError??'正在读取原版方块形状，请稍候。',Boolean(collisionError));return;}
+  if(mode!=='view'&&prefs.resource?.kind==='jar'&&!collisions&&!collisionError){note(collisionError??'正在读取原版方块形状，请稍候。',Boolean(collisionError));return;}
   const entityPosition=!$('pane-entities').hidden&&entities.picking(),entity=entityPosition?null:targetEntity(e);
   if(entity||entityPosition){
    drag={id:e.pointerId,button:0,x:e.clientX,y:e.clientY,ox:e.clientX,oy:e.clientY,entity,entityPosition,entityEdit:true};return;
