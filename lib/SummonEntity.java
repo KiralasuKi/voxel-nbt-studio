@@ -1,4 +1,5 @@
 import com.google.gson.Gson;
+import com.google.gson.JsonParser;
 import java.lang.reflect.*;
 import java.nio.file.*;
 import java.util.*;
@@ -28,6 +29,8 @@ class SummonEntity {
    if(!args[0].equals("-"))readMappings(Path.of(args[0]));
    call("SharedConstants",null,"tryDetectVersion");call("server.Bootstrap",null,"bootStrap");
    if(args[1].equals("--summon"))serve(protocol);
+   else if(args[1].equals("--palette"))upgradePalette(Path.of(args[2]),Path.of(args[3]));
+   else if(args[1].equals("--models"))Files.writeString(Path.of(args[2]),new Gson().toJson(bakedEntities(Path.of(args[3]))));
    else writePickShapes(Path.of(args[1]));
    System.exit(0);
   }catch(Throwable e){
@@ -93,12 +96,116 @@ class SummonEntity {
   if(bytes.size()>256*1024)throw new IllegalArgumentException("Entity NBT exceeds 256 KiB");
   return bytes.toByteArray();
  }
+ // Upgrade only a temporary palette for matching against the selected JAR, never the structure file.
+ private static void upgradePalette(Path input,Path output)throws Exception {
+  var json=JsonParser.parseString(Files.readString(input)).getAsJsonObject();
+  var root=type(TAG).getConstructor().newInstance();var list=type("nbt.ListTag").getConstructor().newInstance();
+  for(var entry:json.getAsJsonArray("states")){
+   var row=entry.getAsJsonObject();var tag=type(TAG).getConstructor().newInstance();var props=type(TAG).getConstructor().newInstance();
+   call(TAG,tag,"putString","Name",row.get("name").getAsString());
+   for(var prop:row.getAsJsonObject("props").entrySet())call(TAG,props,"putString",prop.getKey(),prop.getValue().getAsString());
+   if(!row.getAsJsonObject("props").isEmpty())call(TAG,tag,"put","Properties",props);
+   ((List<Object>)list).add(tag);
+  }
+  call(TAG,root,"put","palette",list);
+  var fixer=call("util.datafix.DataFixers",null,"getDataFixer");
+  var kind=field("util.datafix.DataFixTypes",null,"STRUCTURE");
+  var fixed=call("util.datafix.DataFixTypes",kind,"updateToCurrentVersion",fixer,root,json.get("version").getAsInt());
+  var palette=(List<?>)call(TAG,fixed,"get","palette");
+  if(palette.size()!=((List<?>)list).size())throw new IllegalStateException("Palette size changed during upgrade");
+  var registry=field("core.registries.BuiltInRegistries",null,"BLOCK");
+  var out=new ArrayList<Object>();
+  for(var tag:palette){
+   Object state;
+   try{state=call("nbt.NbtUtils",null,"readBlockState",registry,tag);}
+   catch(NoSuchMethodException e){state=call("nbt.NbtUtils",null,"readBlockState",call("core.Registry",registry,"asLookup"),tag);}
+   var canonical=call("nbt.NbtUtils",null,"writeBlockState",state);
+   var id=call(TAG,canonical,"get","id")==null?"Name":"id";
+   var props=call(TAG,canonical,"get",id.equals("id")?"properties":"Properties");
+   var values=new TreeMap<String,String>();
+   if(props!=null)for(var key:(Set<?>)first(TAG,props,List.of("keySet","getAllKeys")))values.put(key.toString(),tagString(props,key.toString()));
+   out.add(Map.of("name",tagString(canonical,id),"props",values));
+  }
+  Files.writeString(output,new Gson().toJson(out));
+ }
+ private static String tagString(Object tag,String key)throws ReflectiveOperationException {
+  Object v=call(TAG,tag,"getString",key);
+  return v instanceof Optional<?> o?o.map(Object::toString).orElse(""):v.toString();
+ }
+ // Older clients use vanilla baked model layers rather than the 26.3 submission collector.
+ private static Map<String,Object> bakedEntities(Path file)throws Exception {
+  var modelGeom="client.model.geom.";
+  var defs=(Map<?,?>)call(modelGeom+"LayerDefinitions",null,"createRoots");
+  var layers=new HashMap<String,Object>();
+  for(var entry:defs.entrySet()){
+   var location=entry.getKey();var layer=first(modelGeom+"ModelLayerLocation",location,List.of("layer","getLayer"));
+   if(layer.equals("main")){var id=first(modelGeom+"ModelLayerLocation",location,List.of("model","getModel")).toString();layers.put(id,entry.getValue());}
+  }
+  var types=new TreeSet<String>();var sizes=new TreeMap<String,Object>();var models=new TreeMap<String,Object>();var unsupported=new TreeMap<String,String>();
+  var registry=(Iterable<?>)field("core.registries.BuiltInRegistries",null,"ENTITY_TYPE");
+  try(var jar=new java.util.jar.JarFile(file.toFile())){
+   var textures=new TreeSet<String>();String prefix="assets/minecraft/textures/entity/";
+   jar.stream().map(e->e.getName()).filter(n->n.startsWith(prefix)&&n.endsWith(".png")).forEach(n->textures.add(n.substring(prefix.length(),n.length()-4)));
+   var picks=Map.ofEntries(Map.entry("pig","pig/pig"),Map.entry("cow","cow/cow"),Map.entry("chicken","chicken/chicken"),Map.entry("sheep","sheep/sheep"),
+    Map.entry("zombie","zombie/zombie"),Map.entry("skeleton","skeleton/skeleton"),Map.entry("creeper","creeper/creeper"),Map.entry("frog","frog/frog_temperate"),
+    Map.entry("cat","cat/tabby"),Map.entry("wolf","wolf/wolf"),Map.entry("horse","horse/horse_brown"),Map.entry("villager","villager/villager"),
+    Map.entry("slime","slime/slime"),Map.entry("magma_cube","slime/magmacube"),Map.entry("armor_stand","armorstand/wood"),Map.entry("piglin","piglin/piglin"));
+   for(var entity:registry){
+    var id=call("core.Registry",registry,"getKey",entity).toString();var name=id.substring(id.indexOf(':')+1);
+    if((boolean)call("world.entity.EntityType",entity,"canSummon"))types.add(id);
+    sizes.put(id,List.of(call("world.entity.EntityType",entity,"getWidth"),call("world.entity.EntityType",entity,"getHeight")));
+    try{
+     var layer=layers.get(id);if(layer==null)throw new IllegalStateException("no baked layer");
+     String texture=picks.getOrDefault(name,name+"/"+name);
+     if(!textures.contains(texture))texture=List.of(texture+"_temperate",name,name+"/temperate_"+name,name+"/"+name+"_temperate",name+"/"+name+"_texture")
+      .stream().filter(textures::contains).findFirst().orElse(null);
+     if(texture==null)throw new IllegalStateException("no matching texture");
+     models.put(id,bakeEntityLayer(layer,texture,name.equals("slime")));
+    }catch(Exception|LinkageError e){unsupported.put(id,"No offline baked model");}
+   }
+   var skins=new ArrayList<String>();
+   for(String style:List.of("slim","wide"))for(String who:List.of("alex","ari","efe","kai","makena","noor","steve","sunny","zuri"))skins.add("textures/entity/player/"+style+"/"+who+".png");
+   for(String who:List.of("player","mannequin"))if(sizes.containsKey("minecraft:"+who))for(String style:List.of("wide","slim")){
+    var layer=layers.get("minecraft:player"+(style.equals("slim")?"_slim":""));if(layer==null)continue;
+    var id="minecraft:"+who;models.put(id+(style.equals("slim")?"#slim":""),bakeEntityLayer(layer,"player/"+style+"/steve",true));unsupported.remove(id);
+   }
+   return Map.of("types",types,"sizes",sizes,"models",models,"unsupported",unsupported,"defaultSkins",skins);
+  }
+ }
+ private static List<Object> bakeEntityLayer(Object layer,String texture,boolean translucent)throws Exception {
+  var model=call("client.model.geom.builders.LayerDefinition",layer,"bakeRoot");
+  var poseOwner="com.mojang.blaze3d.vertex.PoseStack";
+  var vertexOwner="com.mojang.blaze3d.vertex.VertexConsumer";
+  var pose=type(poseOwner).getConstructor().newInstance();
+  call(poseOwner,pose,"scale",-1f,-1f,1f);call(poseOwner,pose,"translate",0f,-1.501f,0f);
+  var iface=type(vertexOwner);var verts=new ArrayList<Float>();var q=new float[32];var count=new int[1];
+  var add=findMethod(vertexOwner,iface,"addVertex",0f,0f,0f,-1,0f,0f,0,0,0f,0f,0f);
+  var sink=Proxy.newProxyInstance(iface.getClassLoader(),new Class[]{iface},(self,m,args)->{
+   if(m.equals(add)){
+    int k=count[0]++*8,color=(int)args[3];float shade=Math.max(.6f,.75f+.25f*(float)args[9]);
+    for(int i=0;i<3;i++)q[k+i]=(float)args[i];
+    for(int i=0;i<3;i++)q[k+3+i]=((color>>(16-i*8))&255)/255f*shade;
+    q[k+6]=(float)args[4];q[k+7]=(float)args[5];
+    if(count[0]==4){for(int i:new int[]{0,1,2,0,2,3})for(int j=0;j<8;j++)verts.add(q[i*8+j]);count[0]=0;}
+    return null;
+   }
+   return m.isDefault()?InvocationHandler.invokeDefault(self,m,args):self;
+  });
+  call("client.model.geom.ModelPart",model,"render",pose,sink,0,0,-1);
+  if(verts.isEmpty())throw new IllegalStateException("Empty baked model");
+  return List.of(Map.of("vertices",verts,"texture",texture,"translucent",translucent));
+ }
  private static void writePickShapes(Path output)throws Exception {
   var registry=(Iterable<?>)field("core.registries.BuiltInRegistries",null,"BLOCK");
   var world=field("world.level.EmptyBlockGetter",null,"INSTANCE");
   var zero=field("core.BlockPos",null,"ZERO");
   var shapes=new LinkedHashMap<List<Double>,Integer>();
   var rows=new TreeMap<String,Object>();
+  var schema=new TreeMap<String,Object>();var traits=new TreeMap<String,Object>();var turns=new TreeMap<String,Object>();
+  var rotation=field("world.level.block.Rotation",null,"CLOCKWISE_90");
+  var dirs=new ArrayList<Object>();for(var d:List.of("DOWN","UP","NORTH","SOUTH","WEST","EAST"))dirs.add(field("core.Direction",null,d));
+  var fluids=field("core.registries.BuiltInRegistries",null,"FLUID");
+  var fluidNames=List.of("minecraft:empty","minecraft:water","minecraft:flowing_water","minecraft:lava","minecraft:flowing_lava");
   var base="world.level.block.state.BlockBehaviour$BlockStateBase";
   var holder="world.level.block.state.StateHolder";
   var property="world.level.block.state.properties.Property";
@@ -123,7 +230,10 @@ class SummonEntity {
    for(var p:(Collection<?>)call(holder,def,"getProperties"))props.put(call(property,p,"getName").toString(),p);
    var names=List.copyOf(props.keySet());var defaults=new ArrayList<String>();
    for(var name:names){var p=props.get(name);defaults.add(call(property,p,"getName",values.invoke(def,p)).toString());}
-   var overrides=new TreeMap<String,Integer>();int initial=-1;
+   var overrides=new TreeMap<String,Integer>();int initial=-1,defaultFlags=0;
+   var flags=new TreeMap<String,Integer>();var allowed=new ArrayList<TreeSet<String>>();
+   for(var name:names)allowed.add(new TreeSet<>());
+   var rotated=new TreeMap<String,List<String>>();
    for(var state:(Iterable<?>)call("world.level.block.state.StateDefinition",definition,"getPossibleStates")){
     var boxes=new ArrayList<Double>();
     var raw=(List<?>)aabbs.invoke(collision.invoke(state,world,zero));
@@ -145,16 +255,30 @@ class SummonEntity {
     for(var box:raw)for(int i=0;i<boxFields.size();i++)boxes.add(boxFields.get(i).getDouble(box)-origin[i%3]);
     int idx=shapes.computeIfAbsent(boxes,k->shapes.size());
     if(state==def)initial=idx;
-    if(!names.isEmpty()){
-     var vals=new ArrayList<String>();
-     for(var name:names){var p=props.get(name);vals.add(call(property,p,"getName",values.invoke(state,p)).toString());}
-     overrides.put(String.join(",",vals),idx);
-    }
+    var vals=new ArrayList<String>();var next=new ArrayList<String>();
+    var turned=names.isEmpty()?state:call(base,state,"rotate",rotation);
+    for(var name:names){var p=props.get(name);var v=call(property,p,"getName",values.invoke(state,p)).toString();
+     allowed.get(vals.size()).add(v);vals.add(v);next.add(call(property,p,"getName",values.invoke(turned,p)).toString());}
+    var stateKey=String.join(",",vals);
+    if(!names.isEmpty()){overrides.put(stateKey,idx);if(!vals.equals(next))rotated.put(stateKey,next);}
+    int n=((boolean)call(base,state,"isSolid")?1:0)|((boolean)call(base,state,"canBeReplaced")?2:0);
+    for(int i=0;i<dirs.size();i++)if((boolean)call(base,state,"isFaceSturdy",world,zero,dirs.get(i)))n|=4<<i;
+    var fluid=call("world.level.material.FluidState",call(base,state,"getFluidState"),"getType");
+    n|=Math.max(0,fluidNames.indexOf(call("core.Registry",fluids,"getKey",fluid).toString()))<<8;
+    if(state==def)defaultFlags=n;flags.put(stateKey,n);
    }
    final int idx=initial;overrides.values().removeIf(v->v==idx);
    rows.put(key,overrides.isEmpty()?initial:List.of(initial,names,defaults,overrides));
+   var spec=new TreeMap<String,Object>();for(int i=0;i<names.size();i++)spec.put(names.get(i),Map.of("default",defaults.get(i),"values",allowed.get(i)));
+   schema.put(key,spec);
+   final int baseline=defaultFlags;flags.values().removeIf(v->v==baseline);
+   traits.put(key,flags.isEmpty()?baseline:List.of(baseline,names,defaults,flags,allowed));
+   if(!rotated.isEmpty())turns.put(key,List.of(names,defaults,rotated));
   }
-  Files.writeString(output,new Gson().toJson(Map.of("shapes",shapes.keySet(),"blocks",rows)));
+  var tiles=new TreeMap<String,String>();var tileRegistry=(Iterable<?>)field("core.registries.BuiltInRegistries",null,"BLOCK_ENTITY_TYPE");
+  for(var tile:tileRegistry){var key=call("core.Registry",tileRegistry,"getKey",tile).toString();
+   for(var block:(Set<?>)field("world.level.block.entity.BlockEntityType",tile,"validBlocks"))tiles.put(getKey.invoke(registry,block).toString(),key);}
+  Files.writeString(output,new Gson().toJson(Map.of("shapes",shapes.keySet(),"blocks",rows,"schema",schema,"traits",traits,"turns",turns,"tiles",tiles)));
  }
  private static Object blockOffset(String base,Object state,Object world,Object pos)throws ReflectiveOperationException {
   try{return call(base,state,"getOffset",pos);}catch(NoSuchMethodException e){return call(base,state,"getOffset",world,pos);}
@@ -207,7 +331,8 @@ class SummonEntity {
    }
   }
  }
- private static Class<?> type(String name)throws ClassNotFoundException{return Class.forName(classes.getOrDefault(MC+name,MC+name));}
+ private static String ownerName(String name){return name.startsWith("com.")?name:MC+name;}
+ private static Class<?> type(String name)throws ClassNotFoundException{var full=ownerName(name);return Class.forName(classes.getOrDefault(full,full));}
  private static Class<?> optionalType(String name){try{return type(name);}catch(ClassNotFoundException e){return null;}}
  private static String binaryName(String name){int i=name.indexOf('[');return i<0?classes.getOrDefault(name,name):classes.getOrDefault(name.substring(0,i),name.substring(0,i))+name.substring(i);}
  private static Field reflectedField(String owner,String name)throws ReflectiveOperationException{
@@ -220,13 +345,13 @@ class SummonEntity {
  }
  private static Object call(String owner,Object target,String name,Object... args)throws ReflectiveOperationException{return findMethod(owner,target,name,args).invoke(target,args);}
  private static Method findMethod(String owner,Object target,String name,Object... args)throws ReflectiveOperationException{
-  var signatures=methods.get(MC+owner+"#"+name);
+  var signatures=methods.get(ownerName(owner)+"#"+name);
   for(var m:type(owner).getDeclaredMethods()){
    if(m.getParameterCount()!=args.length||Modifier.isStatic(m.getModifiers())!=(target==null))continue;
    if(signatures==null?!name.equals(m.getName()):signatures.stream().noneMatch(s->s.matches(m)))continue;
    var types=m.getParameterTypes();boolean matches=true;
    for(int i=0;i<args.length;i++){
-    var t=types[i];if(t==boolean.class)t=Boolean.class;if(t==int.class)t=Integer.class;
+    var t=types[i];if(t==boolean.class)t=Boolean.class;if(t==int.class)t=Integer.class;if(t==float.class)t=Float.class;if(t==double.class)t=Double.class;
     if(!t.isInstance(args[i])){matches=false;break;}
    }
    if(matches){m.setAccessible(true);return m;}

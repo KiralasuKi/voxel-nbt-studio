@@ -8,9 +8,9 @@ const {gzip}=require('node:zlib');
 const {promisify}=require('node:util');
 const {create,validateState,clipThumb,clipBytes,clipEntityPreview,clipHeadProfiles}=require('./lib/nbt');
 const {jarFolder,jarMaskData}=require('./lib/assets');
-const {collisionShapes,prepareSummon,stopSummon,summonEntity}=require('./lib/native-summon');
+const {collisionShapes,gameClasspath,prepareSummon,stopSummon,summonEntity}=require('./lib/native-summon');
 const {entityModels}=require('./lib/mask-java');
-const {addHint}=require('./lib/paths');
+const {addHint,librariesRoots}=require('./lib/paths');
 const {playerSkin}=require('./lib/player-skins');
 const manifest=require('./package.json');
 const VIEW='voxelNbt.structure';
@@ -48,7 +48,7 @@ class Provider{
     const src=this.prefs().resource;if(src?.kind!=='jar')return null;
     const st=await fs.stat(src.path),key=src.path+'|'+st.size+'|'+st.mtimeMs;
     if(this.maskCache?.key!==key){
-      const data=jarMaskData(src.path).then(async raw=>({...raw,traits:raw.dataVersion===5023?JSON.parse(await fs.readFile(path.join(__dirname,'media','mask-states.json'),'utf8')):null}));
+      const data=Promise.all([jarMaskData(src.path),collisionShapes(src.path).catch(()=>null)]).then(([raw,game])=>({...raw,traits:game?.traits??null}));
       this.maskCache={key,data};data.catch(()=>{if(this.maskCache?.key===key)this.maskCache=null;});
     }
     return {key,jar:src.path,catalog:await this.maskCache.data};
@@ -56,7 +56,7 @@ class Provider{
   async documentMasks(doc){
     const pack=await this.maskSource();if(!pack)throw new Error('方块掩码需要在设置里选择原版客户端 JAR');
     if(doc.maskPack?.key!==pack.key){
-      const data=doc.call('maskCatalog',pack.catalog,pack.jar).then(legacy=>legacy?{...pack.catalog,legacy}:pack.catalog);
+      const data=doc.call('maskCatalog',pack.catalog,pack.jar,librariesRoots(pack.jar)).then(legacy=>legacy?{...pack.catalog,legacy}:pack.catalog);
       doc.maskPack={key:pack.key,data};data.catch(()=>{if(doc.maskPack?.data===data)doc.maskPack=null;});
     }
     return doc.maskPack.data;
@@ -117,17 +117,22 @@ class Provider{
     await Promise.all([...this.panels].map(pane=>this.loadWebview(pane)));
   }
   showTemplates(p){p.panel.webview.postMessage({type:'templates',items:[...this.templates.values()].reverse().map(({meta})=>meta)});}
-  async showCollisionShapes(p){
+  async showCollisionShapes(doc,p){
     const src=this.prefs().resource,generation=p.generation;
-    if(src?.kind!=='jar')return;
+    if(src?.kind!=='jar'){await doc.call('gameCatalog',null).catch(()=>{});return;}
     const send=m=>{if(p.alive&&p.generation===generation&&this.prefs().resource?.path===src.path)p.panel.webview.postMessage({type:'collisionShapes',...m});};
-    try{send({catalog:await collisionShapes(src.path)});}catch(e){send({error:e.message});}
+    try{
+      const {blocks,shapes,schema,tiles,turns,dataVersion,version}=await collisionShapes(src.path);
+      if(this.prefs().resource?.path!==src.path||!p.alive||p.generation!==generation)return;
+      await doc.call('gameCatalog',{schema,tiles,turns,dataVersion});
+      send({catalog:{blocks,shapes,schema,tiles,dataVersion,version}});
+    }catch(e){if(p.alive&&p.generation===generation&&this.prefs().resource?.path===src.path)await doc.call('gameCatalog',null).catch(()=>{});send({error:e.message});}
   }
   async showEntityModels(p){
     const src=this.prefs().resource,generation=p.generation;
     if(src?.kind!=='jar')return;
     try{const data=await entityModels(src.path);if(p.alive&&p.generation===generation)p.panel.webview.postMessage({type:'entityModels',data});}
-    catch{if(p.alive&&p.generation===generation)p.panel.webview.postMessage({type:'entityModels',error:'实体模型预览需要完整的原版 26.3 客户端 JAR 和 Java 25；不影响按所选 JAR 新增实体。'});}
+    catch(e){if(p.alive&&p.generation===generation)p.panel.webview.postMessage({type:'entityModels',error:`实体模型未加载：${e.message.split(/\r?\n/)[0].slice(0,220)}`});}
   }
   storeTemplate(p,clip){
     const bytes=[...this.templates.values()].reduce((n,t)=>n+t.clip.bytes,0);
@@ -184,8 +189,10 @@ class Provider{
       const src=this.prefs().resource;
       if(src?.kind!=='jar')throw new Error('请先选择原版客户端 JAR');
       const dv=await doc.call('entityBounds',q.pos);
+      const {version}=await gameClasspath(src.path);
+      if(dv!==null&&version.world_version!==dv)throw new Error(`所选 JAR（${version.id}）与结构 DataVersion ${dv} 不同。请选择匹配的 JAR 后再新增实体。`);
       const result=await summonEntity(src.path,q.id,q.pos,q.snbt);q.summoned=result.nbt;
-      summon={version:result.version,mismatch:result.dv!==dv};
+      summon=result.version;
     }
     if(q.kind==='entity'&&q.action==='delete'){
       const {id,revision}=await doc.call('entityDetails',q.index);
@@ -208,7 +215,7 @@ class Provider{
       this.changes.fire({document:doc,label:{entity:'编辑结构实体',snbt:'编辑结构 SNBT',size:'修改结构大小',paletteAdd:'添加调色板',paletteDelete:'删除调色板',paletteClean:'清除未使用颜料',paletteState:'修改变体状态'}[q.kind],undo:()=>apply(false),redo:()=>apply(true)});
       await refresh(change.active);
     }
-    panel.webview.postMessage({type:'ack',commandText:m.commandText,entity:change?.entity,snbt:q.kind==='snbt',...(summon?{notice:`已按 ${summon.version} 新增实体。${summon.mismatch?'JAR 与模板数据版本不同，未转换或改写模板版本。':''}`}:{}),...(q.kind==='paletteClean'?{notice:change?.removed?`已清除 ${change.removed} 个未使用状态槽位。`:'调色板没有未使用的状态。'}:{})});
+    panel.webview.postMessage({type:'ack',commandText:m.commandText,entity:change?.entity,snbt:q.kind==='snbt',...(summon?{notice:`已按 ${summon} 新增实体。`}:{}),...(q.kind==='paletteClean'?{notice:change?.removed?`已清除 ${change.removed} 个未使用状态槽位。`:'调色板没有未使用的状态。'}:{})});
   }
   async resolveCustomEditor(doc,panel){
     const media=vscode.Uri.joinPath(this.context.extensionUri,'media');
@@ -243,7 +250,7 @@ class Provider{
       doc.run(async()=>{
         await doc.ready;
         switch(m.type){
-          case 'ready':p.active=true;this.showPrefs(p);this.showBrushPresets(p);await doc.view(p);this.showTemplates(p);void this.showMasks(doc,p);void this.showEntityModels(p);void this.showCollisionShapes(p);break;
+          case 'ready':p.active=true;this.showPrefs(p);this.showBrushPresets(p);await doc.view(p);this.showTemplates(p);void this.showMasks(doc,p);void this.showEntityModels(p);void this.showCollisionShapes(doc,p);break;
           case 'palette':p.palette=Number(m.palette);await doc.view(p);break;
           case 'snbt':panel.webview.postMessage({type:'snbt',...await doc.call('snbt')});break;
           case 'entityDetails':panel.webview.postMessage({type:'entityDetails',data:await doc.call('entityDetails',m.index)});break;
@@ -296,7 +303,8 @@ function activate(context){
   context.subscriptions.push(provider.changes,vscode.window.registerCustomEditorProvider(VIEW,provider,{webviewOptions:{retainContextWhenHidden:true},supportsMultipleEditorsPerDocument:true}),vscode.commands.registerCommand('voxelNbt.open',open),vscode.commands.registerCommand('voxelNbt.create',async()=>{
     const text=await vscode.window.showInputBox({title:'新建结构：宽 X、高 Y、深 Z',value:'32,32,32',validateInput:v=>{if(!/^\s*\d+\s*[,， ]\s*\d+\s*[,， ]\s*\d+\s*$/.test(v))return '例如 32,32,32';try{create(v.match(/\d+/g).map(Number));}catch(e){return e.message;}}});if(!text)return;
     const uri=await vscode.window.showSaveDialog({filters:{'Java 结构 NBT':['nbt']}});if(!uri)return;
-    try{const file=uriCheck(uri), to=file.toLowerCase().endsWith('.nbt')?file:file+'.nbt';await fs.writeFile(to,await promisify(gzip)(create(text.match(/\d+/g).map(Number))),{flag:'wx'});await open(vscode.Uri.file(to));}catch(e){vscode.window.showErrorMessage(e.code==='EEXIST'?'文件已存在，请换一个名称。':e.message);}
+    try{const src=provider.prefs().resource,dv=src?.kind==='jar'?(await jarMaskData(src.path)).dataVersion??undefined:undefined;
+      const file=uriCheck(uri), to=file.toLowerCase().endsWith('.nbt')?file:file+'.nbt';await fs.writeFile(to,await promisify(gzip)(create(text.match(/\d+/g).map(Number),dv)),{flag:'wx'});await open(vscode.Uri.file(to));}catch(e){vscode.window.showErrorMessage(e.code==='EEXIST'?'文件已存在，请换一个名称。':e.message);}
   }));
 }
 module.exports={activate,deactivate:stopSummon};

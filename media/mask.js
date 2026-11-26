@@ -75,7 +75,7 @@ export function compileMask(raw,catalog){
    if(type==='matching_block_tag'&&(typeof o.tag!=='string'||o.tag.startsWith('#')))fail('matching_block_tag 的 tag 需要不带 # 的标签 ID');
    const hits=type==='matching_blocks'?set(o.blocks,'block'):tag(o.tag,'block',[],true);check=s=>hits.has(s.name);
   }else{
-   if(!catalog.traits)fail(`${type} 需要所选版本的方块状态数据，目前只提供 Minecraft 26.3`);
+   if(!catalog.traits)fail(`${type} 需要先加载所选版本的原版方块状态数据`);
    if(type==='matching_fluids'){const hits=set(o.fluids,'fluid');check=s=>hits.has(fluids[s.flags>>8]||fluids[0]);}
    if(type==='solid')check=s=>Boolean(s.flags&1);
    if(type==='replaceable')check=s=>Boolean(s.flags&2);

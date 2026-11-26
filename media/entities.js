@@ -56,7 +56,7 @@ export function createEntities({vscode,edit,blocked,onPick,onSelect,onVisibility
  }
  function status(){
   const active=selected(),mesh=active&&(active.hanging?hangingModel(active)?.parts.length:modelFor(active));
-  $('entityStatus').textContent=picking?'点击方块表面或工作层填写位置，Esc 取消。':!jar?'选择客户端 JAR 后启用实体预览；仍可编辑数据。':error||(!catalog?'正在读取原版实体模型…':active&&!mesh?'该类型没有可离线绘制的原版模型，显示占位框。':`${rows.length} 个可编辑实体 · 原版静态模型`);
+  $('entityStatus').textContent=picking?'点击方块表面或工作层填写位置，Esc 取消。':!jar?'选择客户端 JAR 后启用实体预览；仍可编辑数据。':error||(!catalog?'正在读取原版实体模型…':active&&!mesh?'该类型没有可离线绘制的原版模型，显示占位框。':`${rows.length} 个可编辑实体 · ${catalog.approximate?'原版静态模型（简化）':'原版静态模型'}`);
  }
  function setJar(on){jar=on;$('renderEntities').disabled=!on;status();buttons();onVisibilityChange(visible());dirty();}
  function setCatalog(data,message){catalog=data;error=message;$('entityIds').replaceChildren(...(data?.types??[]).map(id=>Object.assign(document.createElement('option'),{value:id})));status();dirty();}
